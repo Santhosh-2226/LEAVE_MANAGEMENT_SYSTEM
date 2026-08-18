@@ -4,12 +4,10 @@ async function viewData() {
   try {
     console.log("=== DB VIEW SCRIPT ===");
     
-    // Fetch users
     const usersRes = await pool.query('SELECT * FROM users');
     console.log("\n--- USERS TABLE ---");
     console.table(usersRes.rows);
 
-    // Fetch leave requests
     const requestsRes = await pool.query('SELECT * FROM leave_requests ORDER BY id ASC');
     console.log("\n--- LEAVE_REQUESTS TABLE ---");
     console.table(requestsRes.rows);
