@@ -15,6 +15,7 @@ export const query = (text, params) => pool.query(text, params);
 export async function initDbTables() {
   try {
     await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
       CREATE TABLE IF NOT EXISTS slack_integrations (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,

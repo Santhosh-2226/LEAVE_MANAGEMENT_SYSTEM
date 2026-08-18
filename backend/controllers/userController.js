@@ -5,6 +5,7 @@ export async function getUsers(req, res) {
     const result = await pool.query(
       `SELECT u.id,
               u.name,
+              u.email,
               u.role,
               u.is_admin as "isAdmin",
               u.employment_type as "employmentType",
@@ -15,8 +16,14 @@ export async function getUsers(req, res) {
               u.manager_id as "managerId",
               m.name as "managerName",
               m.role as "managerRole",
-              u.join_date as "joinDate",
-              u.region
+              u.join_date::text as "joinDate",
+              u.region,
+              EXISTS (
+                SELECT 1 FROM leave_requests lr
+                WHERE lr.user_id = u.id
+                  AND lr.status = 'APPROVED'
+                  AND CURRENT_DATE BETWEEN lr.start_date AND lr.end_date
+              ) as is_on_leave_today
        FROM users u
        LEFT JOIN users d ON u.delegate_id = d.id
        LEFT JOIN users m ON u.manager_id = m.id
@@ -28,19 +35,45 @@ export async function getUsers(req, res) {
   }
 }
 
+/**
+ * Stage 18: Live dynamic availability calculation derived from approved leave overlapping CURRENT_DATE
+ * GET /users/:id/availability
+ */
+export async function getAvailability(req, res) {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM leave_requests
+         WHERE user_id = $1
+           AND status = 'APPROVED'
+           AND CURRENT_DATE BETWEEN start_date AND end_date
+       ) as is_unavl`,
+      [id]
+    );
+
+    if (result.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const isUnavl = result.rows[0]?.is_unavl;
+    return res.json({ status: isUnavl ? 'UNAVL' : 'AVL' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 export async function createEmployee(req, res) {
-  const { name, role, employmentType, managerId, joinDate, region } = req.body;
+  const { name, email, role, employmentType, managerId, joinDate, region } = req.body;
   if (!name || !role || !joinDate) {
     return res.status(400).json({ error: 'Name, role, and joinDate are required' });
   }
   try {
     const result = await pool.query(
-      `INSERT INTO users (name, role, is_admin, employment_type, availability_status, manager_id, join_date, region)
-       VALUES ($1, $2, false, $3, 'AVL', $4, $5, $6)
-       RETURNING id, name, role, is_admin as "isAdmin", employment_type as "employmentType",
-                 availability_status as "availabilityStatus", manager_id as "managerId", join_date as "joinDate", region`,
+      `INSERT INTO users (name, email, role, is_admin, employment_type, availability_status, manager_id, join_date, region)
+       VALUES ($1, $2, $3, false, $4, 'AVL', $5, $6, $7)
+       RETURNING id, name, email, role, is_admin as "isAdmin", employment_type as "employmentType",
+                 availability_status as "availabilityStatus", manager_id as "managerId", join_date::text as "joinDate", region`,
       [
         name.trim(),
+        email ? email.trim() : null,
         role,
         employmentType || 'Full-Time',
         managerId ? parseInt(managerId) : null,
@@ -56,19 +89,21 @@ export async function createEmployee(req, res) {
 
 export async function updateEmployee(req, res) {
   const { id } = req.params;
-  const { name, role, employmentType, managerId, region } = req.body;
+  const { name, email, role, employmentType, managerId, region } = req.body;
   try {
     const result = await pool.query(
       `UPDATE users
        SET name = COALESCE($1, name),
-           role = COALESCE($2, role),
-           employment_type = COALESCE($3, employment_type),
-           manager_id = $4,
-           region = COALESCE($5, region)
-       WHERE id = $6
-       RETURNING id, name, role, employment_type as "employmentType", manager_id as "managerId", region`,
+           email = COALESCE($2, email),
+           role = COALESCE($3, role),
+           employment_type = COALESCE($4, employment_type),
+           manager_id = $5,
+           region = COALESCE($6, region)
+       WHERE id = $7
+       RETURNING id, name, email, role, employment_type as "employmentType", manager_id as "managerId", region`,
       [
         name ? name.trim() : null,
+        email ? email.trim() : null,
         role || null,
         employmentType || null,
         managerId !== undefined ? (managerId ? parseInt(managerId) : null) : null,

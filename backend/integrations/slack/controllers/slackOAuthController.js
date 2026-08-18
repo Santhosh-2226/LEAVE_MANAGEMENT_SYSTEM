@@ -125,6 +125,23 @@ export async function callback(req, res) {
       [userId, slackUserId, slackTeamId, encryptedToken, slackUserName]
     );
 
+    // Proactively backfill and schedule Slack jobs for any existing approved leaves
+    try {
+      const existingApprovedRes = await pool.query(
+        `SELECT id, start_date::text as "startDate", end_date::text as "endDate", leave_type as "leaveType"
+         FROM leave_requests
+         WHERE user_id = $1 AND status = 'APPROVED' AND end_date >= CURRENT_DATE`,
+        [userId]
+      );
+
+      const { scheduleSlackStatusJobs } = await import('../services/slackJobScheduler.js');
+      for (const l of existingApprovedRes.rows) {
+        await scheduleSlackStatusJobs(l.id, userId, l.startDate, l.endDate, l.leaveType);
+      }
+    } catch (backfillErr) {
+      console.error('[Slack OAuth] Backfill error:', backfillErr.message);
+    }
+
     // Redirect to React application with success indicator
     return res.redirect(`${FRONTEND_URL}/?slack=connected&user_id=${userId}`);
   } catch (err) {

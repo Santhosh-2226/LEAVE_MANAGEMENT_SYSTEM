@@ -1,4 +1,26 @@
 import { pool } from '../db/pool.js';
+import { DEFAULT_POLICIES } from '../leaveEngine.js';
+
+export async function getActivePolicies() {
+  try {
+    const result = await pool.query('SELECT * FROM accrual_policies WHERE id = 1');
+    if (result.rowCount > 0) {
+      const row = result.rows[0];
+      return {
+        baseLeave: parseFloat(row.base_leave),
+        employeeRate: parseFloat(row.employee_rate),
+        managerRate: parseFloat(row.manager_rate),
+        seniorManagerRate: parseFloat(row.senior_manager_rate),
+        directorRate: parseFloat(row.director_rate),
+        vpRate: parseFloat(row.vp_rate),
+        partTimeRate: parseFloat(row.part_time_rate),
+      };
+    }
+  } catch {
+    // fallback to defaults
+  }
+  return DEFAULT_POLICIES;
+}
 
 export async function getPolicies(req, res) {
   try {

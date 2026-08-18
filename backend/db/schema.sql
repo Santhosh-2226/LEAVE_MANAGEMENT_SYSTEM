@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
+  email TEXT,
   role TEXT NOT NULL DEFAULT 'Employee',
   is_admin BOOLEAN NOT NULL DEFAULT false,
   employment_type TEXT NOT NULL DEFAULT 'Full-Time',

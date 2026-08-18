@@ -1,7 +1,10 @@
 # Environment & Credentials
 .env
-.env.local
-.env.*.local
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
 *.env
 
 # Dependencies

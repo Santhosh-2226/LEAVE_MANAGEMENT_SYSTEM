@@ -1,11 +1,11 @@
 export const DEFAULT_POLICIES = {
   baseLeave: 10.0,
-  employeeRate: 1.0,
-  managerRate: 2.0,
-  seniorManagerRate: 4.0,
-  directorRate: 5.0,
-  vpRate: 5.0,
-  partTimeRate: 0.5,
+  employeeRate: 1.25, // 15 days/year
+  managerRate: 1.5,   // 18 days/year
+  seniorManagerRate: 1.75, // 21 days/year
+  directorRate: 2.0,  // 24 days/year
+  vpRate: 2.0,        // 24 days/year
+  partTimeRate: 0.75, // 9 days/year
 };
 
 export function calculateWorkingDays(startDateStr, endDateStr, holidays = []) {
@@ -121,3 +121,9 @@ export function calculateAccrual(joinDate, role, employmentType = 'Full-Time', a
 export function calculateAvailableBalance(accrued, used) {
   return Math.round((accrued - used) * 10) / 10;
 }
+
+export function calculateUsedLeave(approvedLeaves = []) {
+  const sum = approvedLeaves.reduce((acc, curr) => acc + parseFloat(curr.workingDays || curr.working_days || 0), 0);
+  return Math.round(sum * 10) / 10;
+}
+
