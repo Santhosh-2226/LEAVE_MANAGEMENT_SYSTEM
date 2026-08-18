@@ -1,5 +1,6 @@
 import { pool } from '../db/pool.js';
 import { calculateAccrual, calculateAvailableBalance, calculateWorkingDays, DEFAULT_POLICIES } from '../leaveEngine.js';
+import { scheduleSlackStatusJobs } from '../integrations/slack/services/slackJobScheduler.js';
 
 async function getHolidaysForRegion(region) {
   const result = await pool.query(
@@ -222,6 +223,16 @@ export async function applyLeave(req, res) {
       ]
     );
 
+    if (status === 'APPROVED') {
+      scheduleSlackStatusJobs(
+        result.rows[0].id,
+        user.id,
+        result.rows[0].startDate,
+        result.rows[0].endDate,
+        finalLeaveType
+      );
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -351,6 +362,16 @@ export async function approveLeave(req, res) {
         [JSON.stringify(history), decidedBy, id]
       );
       if (result.rowCount === 0) return res.status(409).json({ error: 'Leave request has already been decided' });
+
+      // Non-blocking Slack status scheduling with exact dynamic leave dates
+      scheduleSlackStatusJobs(
+        result.rows[0].id,
+        leaveReq.user_id,
+        result.rows[0].startDate,
+        result.rows[0].endDate,
+        leaveReq.leave_type
+      );
+
       return res.json(result.rows[0]);
     }
   } catch (err) {

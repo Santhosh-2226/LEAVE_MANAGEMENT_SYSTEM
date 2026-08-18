@@ -251,6 +251,22 @@ function App() {
   const [success, setSuccess] = useState('');
   const fileRef = useRef(null);
 
+  // Slack Integration State
+  const [slackStatus, setSlackStatus] = useState({ connected: false });
+  const [slackLoading, setSlackLoading] = useState(false);
+
+  // Handle URL redirect query params from Slack OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('slack') === 'connected') {
+      setSuccess('✅ Slack account connected successfully! Your status will automatically update to 🏖️ On Leave during approved leaves.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('slack_error')) {
+      setError(`Slack connection failed: ${params.get('slack_error')}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   // Determine if past date
   const isPastDate = (() => {
     if (!startDate && !endDate) return false;
@@ -297,6 +313,44 @@ function App() {
     }
   };
 
+  const fetchSlackStatus = async (userId) => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`${API_URL}/api/slack/status?userId=${userId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSlackStatus(data);
+      }
+    } catch {
+      // Non-fatal
+    }
+  };
+
+  const handleConnectSlack = () => {
+    if (!selectedUserId) return;
+    window.location.href = `${API_URL}/api/slack/oauth/authorize?userId=${selectedUserId}`;
+  };
+
+  const handleDisconnectSlack = async () => {
+    if (!selectedUserId) return;
+    setError(''); setSuccess('');
+    setSlackLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/slack/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: parseInt(selectedUserId) })
+      });
+      if (!res.ok) throw new Error('Failed to disconnect Slack');
+      setSuccess('Slack account disconnected.');
+      await fetchSlackStatus(selectedUserId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSlackLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
     fetchPolicies();
@@ -309,6 +363,7 @@ function App() {
       if (found) {
         setAvailabilityStatus(found.availabilityStatus || 'AVL');
         setDelegateId(found.delegateId ? found.delegateId.toString() : '');
+        fetchSlackStatus(found.id);
       }
     }
   }, [selectedUserId, users]);
@@ -325,6 +380,7 @@ function App() {
           fetch(`${API_URL}/leave/approvals?userId=${selectedUserId}`),
           fetch(`${API_URL}/leave/balance?userId=${selectedUserId}`),
           fetch(`${API_URL}/leave/team?managerId=${selectedUserId}`),
+          fetchSlackStatus(selectedUserId)
         ]);
         if (reqRes.ok) setRequests(await reqRes.json());
         if (appRes.ok) setApprovals(await appRes.json());
@@ -1127,6 +1183,43 @@ function App() {
                   </div>
                 </section>
               )}
+
+              {/* Slack Integration Card */}
+              <section className="slack-integration-strip card glass-card">
+                <div className="slack-header-info">
+                  <div className="slack-title-row">
+                    <span className="slack-icon-badge">💬</span>
+                    <span className="slack-title">Slack Integration</span>
+                    <span className={`slack-status-pill ${slackStatus.connected ? 'slack-connected' : 'slack-disconnected'}`}>
+                      {slackStatus.connected ? '🟢 Connected' : '⚪ Not Connected'}
+                    </span>
+                  </div>
+                  <span className="slack-desc">
+                    {slackStatus.connected
+                      ? `Connected as Slack user: @${slackStatus.slackUser?.name || slackStatus.slackUser?.id} ${slackStatus.slackUser?.teamId ? `(${slackStatus.slackUser.teamId})` : ''}. Your status will automatically update to 🏖️ On Leave during approved leaves.`
+                      : 'Connect your Slack account to automatically update your Slack custom status to 🏖️ On Leave when your leaves are approved.'}
+                  </span>
+                </div>
+
+                <div className="slack-actions">
+                  {slackStatus.connected ? (
+                    <button
+                      onClick={handleDisconnectSlack}
+                      className="btn-secondary btn-disconnect"
+                      disabled={slackLoading}
+                    >
+                      {slackLoading ? 'Disconnecting...' : '🔌 Disconnect Slack'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleConnectSlack}
+                      className="btn-primary btn-slack-connect"
+                    >
+                      🔗 Connect Slack
+                    </button>
+                  )}
+                </div>
+              </section>
 
               {/* Approvals Queue */}
               {approvals.length > 0 && (
