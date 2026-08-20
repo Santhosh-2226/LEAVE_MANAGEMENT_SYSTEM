@@ -37,6 +37,25 @@ export async function authorize(req, res) {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // Check if another user is already connected in LeaveFlow
+    const otherConnectedRes = await pool.query(
+      `SELECT si.user_id, u.name 
+       FROM slack_integrations si
+       JOIN users u ON si.user_id = u.id
+       WHERE si.user_id != $1
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (otherConnectedRes.rowCount > 0) {
+      const otherUser = otherConnectedRes.rows[0];
+      return res.redirect(
+        `${FRONTEND_URL}/?slack_error=${encodeURIComponent(
+          `Slack is already connected to ${otherUser.name}. Only one account can be connected at a time. Please disconnect ${otherUser.name} first.`
+        )}`
+      );
+    }
+
     const clientId = process.env.SLACK_CLIENT_ID;
     const redirectUri = process.env.SLACK_REDIRECT_URI || 'http://localhost:5000/api/slack/oauth/callback';
 
@@ -88,6 +107,25 @@ export async function callback(req, res) {
   const { userId } = cached;
 
   try {
+    // Check if another user is already connected in LeaveFlow
+    const otherConnectedRes = await pool.query(
+      `SELECT si.user_id, u.name 
+       FROM slack_integrations si
+       JOIN users u ON si.user_id = u.id
+       WHERE si.user_id != $1
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (otherConnectedRes.rowCount > 0) {
+      const otherUser = otherConnectedRes.rows[0];
+      return res.redirect(
+        `${FRONTEND_URL}/?slack_error=${encodeURIComponent(
+          `Slack is already connected to ${otherUser.name}. Only one account can be connected at a time. Please disconnect ${otherUser.name} first.`
+        )}`
+      );
+    }
+
     // Exchange authorization code for user access token
     const oauthData = await exchangeOAuthCode(code);
     const authedUser = oauthData.authed_user;
@@ -166,12 +204,32 @@ export async function getStatus(req, res) {
     );
 
     if (result.rowCount === 0) {
-      return res.json({ connected: false });
+      // Check if another user is currently connected to Slack in the system
+      const otherRes = await pool.query(
+        `SELECT si.user_id, u.name as "userName", si.slack_user_name as "slackUserName"
+         FROM slack_integrations si
+         JOIN users u ON si.user_id = u.id
+         LIMIT 1`
+      );
+
+      if (otherRes.rowCount > 0) {
+        const other = otherRes.rows[0];
+        return res.json({
+          connected: false,
+          isLockedByOther: true,
+          connectedUserName: other.userName,
+          connectedUserId: other.user_id,
+          slackUserName: other.slackUserName
+        });
+      }
+
+      return res.json({ connected: false, isLockedByOther: false });
     }
 
     const row = result.rows[0];
     return res.json({
       connected: true,
+      isLockedByOther: false,
       slackUser: {
         id: row.slack_user_id,
         name: row.slack_user_name,

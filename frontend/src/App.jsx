@@ -6,7 +6,6 @@ const STANDARD_LEAVE_TYPES = [
   'Annual Leave',
   'Sick Leave',
   'Casual Leave',
-  'Emergency Leave',
   'Maternity / Paternity Leave',
   'Unpaid Leave',
 ];
@@ -27,10 +26,11 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 // =========================================================================
+// =========================================================================
 // 1. CALENDAR COMPONENTS
 // =========================================================================
 
-function TeamCalendar({ teamData, holidays, onSelectLeave }) {
+function TeamCalendar({ teamData, onSelectLeave }) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -41,20 +41,24 @@ function TeamCalendar({ teamData, holidays, onSelectLeave }) {
 
   const dateLeaveMap = {};
   for (const l of teamLeaves) {
-    let cur = new Date(l.startDate);
-    const end = new Date(l.endDate);
+    const sStr = l.startDate?.split('T')[0];
+    const eStr = l.endDate?.split('T')[0];
+    if (!sStr || !eStr) continue;
+
+    const [sY, sM, sD] = sStr.split('-').map(Number);
+    const [eY, eM, eD] = eStr.split('-').map(Number);
+    let cur = new Date(sY, sM - 1, sD);
+    const end = new Date(eY, eM - 1, eD);
+
     while (cur <= end) {
-      const iso = cur.toISOString().split('T')[0];
+      const y = cur.getFullYear();
+      const m = String(cur.getMonth() + 1).padStart(2, '0');
+      const d = String(cur.getDate()).padStart(2, '0');
+      const iso = `${y}-${m}-${d}`;
       if (!dateLeaveMap[iso]) dateLeaveMap[iso] = [];
       dateLeaveMap[iso].push(l);
       cur.setDate(cur.getDate() + 1);
     }
-  }
-
-  const holidayMap = {};
-  for (const h of holidays) {
-    const iso = h.holidayDate?.split('T')[0];
-    if (iso) holidayMap[iso] = h.name;
   }
 
   const firstDay = new Date(viewYear, viewMonth, 1).getDay();
@@ -84,32 +88,30 @@ function TeamCalendar({ teamData, holidays, onSelectLeave }) {
       </div>
 
       <div className="cal-grid">
-        {DAYS.map(d => <div key={d} className="cal-day-header">{d}</div>)}
+        {DAYS.map(d => <div key={d} className={`cal-day-header ${d === 'Sun' || d === 'Sat' ? 'cal-day-header-weekend' : ''}`}>{d}</div>)}
         {cells.map((day, i) => {
           if (!day) return <div key={`empty-${i}`} className="cal-cell cal-cell-empty" />;
           const mm = String(viewMonth + 1).padStart(2, '0');
           const dd = String(day).padStart(2, '0');
           const iso = `${viewYear}-${mm}-${dd}`;
+          const dayOfWeek = new Date(viewYear, viewMonth, day).getDay();
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
           const dayLeaves = dateLeaveMap[iso] || [];
-          const holidayName = holidayMap[iso];
           const hasAlert = alertDateSet.has(iso);
           const isToday = day === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
 
           return (
             <div
               key={iso}
-              className={`cal-cell ${isToday ? 'cal-cell-today' : ''}`}
+              className={`cal-cell ${isToday ? 'cal-cell-today' : ''} ${isWeekend ? 'cal-cell-weekend' : ''}`}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="cal-day-num">{day}</span>
-                {hasAlert && <span className="badge badge-rejected" style={{ fontSize: '9px', padding: '0 4px' }}>50%+ Alert</span>}
-              </div>
-
-              {holidayName && (
-                <div className="cal-holiday-tag" title={holidayName}>
-                  <span>🎉 {holidayName}</span>
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  {isWeekend && <span className="cal-weekend-badge" title="Saturday/Sunday Weekly Off">Weekend</span>}
+                  {hasAlert && <span className="badge badge-rejected" style={{ fontSize: '9px', padding: '0 4px' }}>50%+ Alert</span>}
                 </div>
-              )}
+              </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
                 {dayLeaves.map((l, idx) => (
@@ -135,7 +137,7 @@ function TeamCalendar({ teamData, holidays, onSelectLeave }) {
   );
 }
 
-function HolidayCalendar({ holidays, isAdmin, filterRegion, onDelete }) {
+function HolidayCalendar({ holidays, isAdmin, onDelete }) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -176,21 +178,34 @@ function HolidayCalendar({ holidays, isAdmin, filterRegion, onDelete }) {
       </div>
 
       <div className="cal-grid">
-        {DAYS.map(d => <div key={d} className="cal-day-header">{d}</div>)}
+        {DAYS.map(d => <div key={d} className={`cal-day-header ${d === 'Sun' || d === 'Sat' ? 'cal-day-header-weekend' : ''}`}>{d}</div>)}
         {cells.map((day, i) => {
           if (!day) return <div key={`empty-${i}`} className="cal-cell cal-cell-empty" />;
           const mm = String(viewMonth + 1).padStart(2, '0');
           const dd = String(day).padStart(2, '0');
           const iso = `${viewYear}-${mm}-${dd}`;
+          const dayOfWeek = new Date(viewYear, viewMonth, day).getDay();
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
           const dayHolidays = holidayMap[iso] || [];
           const isToday = day === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
 
           return (
-            <div key={iso} className={`cal-cell ${isToday ? 'cal-cell-today' : ''}`}>
-              <span className="cal-day-num">{day}</span>
+            <div key={iso} className={`cal-cell ${isToday ? 'cal-cell-today' : ''} ${isWeekend ? 'cal-cell-weekend' : ''}`}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="cal-day-num">{day}</span>
+                {isWeekend && <span className="cal-weekend-badge" title="Saturday/Sunday Weekly Off">Weekend</span>}
+              </div>
+
+              {/* Saturday & Sunday Weekly Off holiday tag */}
+              {isWeekend && dayHolidays.length === 0 && (
+                <div className="cal-weekend-tag">
+                  <span>🏖️ {dayOfWeek === 6 ? 'Saturday Off' : 'Sunday Off'}</span>
+                </div>
+              )}
+
               {dayHolidays.map((h, idx) => (
-                <div key={idx} className="cal-holiday-tag">
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name}</span>
+                <div key={idx} className="cal-holiday-tag" title={`Region: ${h.region}`}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🎉 {h.name}</span>
                   {isAdmin && (
                     <button className="cal-delete-btn" title="Delete" onClick={() => onDelete(h.id)}>×</button>
                   )}
@@ -827,25 +842,31 @@ export default function App() {
     } catch {}
   };
 
-  const fetchData = async () => {
-    if (!selectedUserId) return;
+  const fetchData = async (overrideUserId) => {
+    const uid = overrideUserId || selectedUserId;
+    if (!uid) return;
+    const curUser = users.find(u => u.id.toString() === uid.toString()) || activeUser;
+    const isMgr = curUser && ['Manager', 'Senior Manager', 'Director', 'Vice President'].includes(curUser.role);
+    const isAdmin = curUser?.isAdmin;
+    const userRegion = curUser?.region || 'US';
+
     setLoading(true);
     try {
-      if (activeUser?.isAdmin) {
+      if (isAdmin) {
         await Promise.all([fetchUsers(), fetchPolicies(), fetchHolidays(filterRegion), fetchHandbook()]);
       } else {
         const promises = [
-          fetch(`${API_URL}/leave/requests?userId=${selectedUserId}`).then(r => r.ok && r.json()).then(d => d && setRequests(d)),
-          fetch(`${API_URL}/leave/approvals?userId=${selectedUserId}`).then(r => r.ok && r.json()).then(d => d && setApprovals(d)),
-          fetch(`${API_URL}/leave/balance?userId=${selectedUserId}`).then(r => r.ok && r.json()).then(d => d && setBalance(d)),
-          fetchSlackStatus(selectedUserId),
-          fetchHolidays(filterRegion),
+          fetch(`${API_URL}/leave/requests?userId=${uid}`).then(r => r.ok && r.json()).then(d => d && setRequests(d)),
+          fetch(`${API_URL}/leave/approvals?userId=${uid}`).then(r => r.ok && r.json()).then(d => d && setApprovals(d)),
+          fetch(`${API_URL}/leave/balance?userId=${uid}`).then(r => r.ok && r.json()).then(d => d && setBalance(d)),
+          fetchSlackStatus(uid),
+          fetchHolidays(userRegion),
           fetchHandbook()
         ];
 
-        if (isManagerOrAbove) {
-          promises.push(fetchAnalytics(selectedUserId));
-          promises.push(fetchTeamLeaves(selectedUserId));
+        if (isMgr) {
+          promises.push(fetchAnalytics(uid));
+          promises.push(fetchTeamLeaves(uid));
         }
 
         await Promise.all(promises);
@@ -872,15 +893,9 @@ export default function App() {
         setDelegateId(found.delegateId ? found.delegateId.toString() : '');
         fetchSlackStatus(found.id);
       }
+      fetchData(selectedUserId);
     }
   }, [selectedUserId, users]);
-
-  useEffect(() => {
-    if (selectedUserId) {
-      setError(''); setSuccess('');
-      fetchData();
-    }
-  }, [selectedUserId, activeUser?.isAdmin]);
 
   const isManagerOrAbove = activeUser && ['Manager', 'Senior Manager', 'Director', 'Vice President'].includes(activeUser.role);
 
@@ -1182,8 +1197,8 @@ export default function App() {
       {/* ========================================================================= */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <div className="sidebar-logo-icon">LM</div>
-          <span className="sidebar-logo-text">Leave Management</span>
+          <div className="sidebar-logo-icon">LF</div>
+          <span className="sidebar-logo-text">LeaveFlow</span>
         </div>
 
         <nav className="sidebar-nav">
@@ -1585,10 +1600,17 @@ export default function App() {
                         <span className={`badge ${slackStatus.connected ? 'badge-approved' : 'badge-withdrawn'}`}>
                           {slackStatus.connected ? 'Connected' : 'Not Connected'}
                         </span>
+                        {slackStatus.isLockedByOther && (
+                          <span className="badge" style={{ backgroundColor: '#fef3c7', color: '#92400e', marginLeft: '6px' }}>
+                            🔒 Linked to {slackStatus.connectedUserName}
+                          </span>
+                        )}
                       </span>
                       <span className="slack-strip-desc">
                         {slackStatus.connected
                           ? `Syncing with Slack (@${slackStatus.slackUser?.name || 'user'}). Status updates to 🏖️ On Leave during approved leaves.`
+                          : slackStatus.isLockedByOther
+                          ? `Slack workspace is currently connected to ${slackStatus.connectedUserName} (@${slackStatus.slackUserName}). Disconnect from ${slackStatus.connectedUserName}'s profile to connect this user.`
                           : 'Connect Slack to automatically set your custom status during approved leaves.'}
                       </span>
                     </div>
@@ -1597,6 +1619,10 @@ export default function App() {
                     {slackStatus.connected ? (
                       <button className="btn btn-secondary btn-sm" onClick={handleDisconnectSlack} disabled={slackLoading}>
                         {slackLoading ? 'Disconnecting...' : 'Disconnect'}
+                      </button>
+                    ) : slackStatus.isLockedByOther ? (
+                      <button className="btn btn-secondary btn-sm" disabled style={{ opacity: 0.65, cursor: 'not-allowed' }} title={`Disconnect ${slackStatus.connectedUserName} first`}>
+                        🔒 In Use by {slackStatus.connectedUserName}
                       </button>
                     ) : (
                       <button className="btn btn-secondary btn-sm" onClick={handleConnectSlack}>
@@ -1763,9 +1789,9 @@ export default function App() {
                     </select>
                   </div>
 
-                  {leaveType === 'Emergency Leave' && (
+                  {leaveType === 'Emergency Leave' && isPastDate && (
                     <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: '12px', color: '#991b1b', lineHeight: 1.5 }}>
-                      🚨 <strong>Emergency Leave Protocol:</strong> Applicable for urgent unforeseen circumstances or when available balance is insufficient/negative. Bypasses regular balance caps and routes for mandatory <strong>2-Tier Managerial + Executive Approval</strong> (even for 1-day leaves).
+                      🚨 <strong>Emergency Backdated Leave:</strong> This date is in the past. It will be recorded as Emergency Leave.
                     </div>
                   )}
 
@@ -2087,7 +2113,7 @@ export default function App() {
                   </div>
                 )}
 
-                <TeamCalendar teamData={teamLeavesData} holidays={holidays} onSelectLeave={(l) => setSelectedLeave(l)} />
+                <TeamCalendar teamData={teamLeavesData} onSelectLeave={(l) => setSelectedLeave(l)} />
               </>
             )}
 
@@ -2100,15 +2126,25 @@ export default function App() {
                   <div className="page-header-text">
                     <span className="page-header-eyebrow">Company Policy</span>
                     <h1 className="page-title">Corporate Public Holidays</h1>
-                    <p className="page-subtitle">Official public company holidays across all operating regions.</p>
+                    <p className="page-subtitle">
+                      {activeUser?.isAdmin
+                        ? 'Official public company holidays across all operating regions.'
+                        : `Official public holidays for your assigned operating branch (Region ${activeUser?.region || 'US'}).`}
+                    </p>
                   </div>
                   <div className="page-header-actions">
-                    <select value={filterRegion} onChange={e => { setFilterRegion(e.target.value); fetchHolidays(e.target.value); }} className="select-compact">
-                      <option value="ALL">All Regions</option>
-                      <option value="US">Region US</option>
-                      <option value="IN">Region IN</option>
-                      <option value="UK">Region UK</option>
-                    </select>
+                    {activeUser?.isAdmin ? (
+                      <select value={filterRegion} onChange={e => { setFilterRegion(e.target.value); fetchHolidays(e.target.value); }} className="select-compact">
+                        <option value="ALL">All Regions</option>
+                        <option value="US">Region US</option>
+                        <option value="IN">Region IN</option>
+                        <option value="UK">Region UK</option>
+                      </select>
+                    ) : (
+                      <span className="badge badge-approved" style={{ padding: '6px 12px', fontSize: '12px' }}>
+                        🌐 Region {activeUser?.region || 'US'} (Your Operating Region)
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -2140,7 +2176,7 @@ export default function App() {
                   </form>
                 )}
 
-                <HolidayCalendar holidays={holidays} isAdmin={activeUser?.isAdmin} filterRegion={filterRegion} onDelete={handleDeleteHoliday} />
+                <HolidayCalendar holidays={holidays} isAdmin={activeUser?.isAdmin} onDelete={handleDeleteHoliday} />
               </>
             )}
 

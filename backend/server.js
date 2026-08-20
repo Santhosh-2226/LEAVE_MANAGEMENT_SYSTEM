@@ -37,7 +37,7 @@ app.use('/api/slack', slackRoutes);
 app.use('/slack', slackRoutes);
 
 app.listen(port, async () => {
-  console.log(`LMD Backend listening at http://localhost:${port}`);
+  console.log(`LeaveFlow Backend listening at http://localhost:${port}`);
   await initDbTables();
   await initPolicyKnowledgeBase();
   // Start persistent background job worker (30-second interval)

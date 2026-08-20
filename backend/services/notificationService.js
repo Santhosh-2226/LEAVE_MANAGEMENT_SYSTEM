@@ -83,7 +83,7 @@ End Date: ${leave.endDate || leave.end_date}
 Working Days: ${leave.workingDays || leave.working_days}
 Reason: ${leave.reason || 'None provided'}
 
-Please log into the Leave Management System to review and approve/reject.
+Please log into LeaveFlow to review and approve/reject.
 `;
 
   return sendEmailSafely({ to: approver.email, subject, text });
@@ -108,7 +108,7 @@ End Date: ${leave.endDate || leave.end_date}
 Working Days: ${leave.workingDays || leave.working_days}
 Reason: ${leave.reason || 'None provided'}
 
-Please log into the Leave Management System to take action.
+Please log into LeaveFlow to take action.
 `;
 
   return sendEmailSafely({ to: nextApprover.email, subject, text });

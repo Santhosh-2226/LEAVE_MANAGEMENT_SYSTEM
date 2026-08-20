@@ -1307,6 +1307,11 @@ html, body {
   text-transform: uppercase;
 }
 
+.cal-day-header-weekend {
+  color: #92400e;
+  background-color: #fffbeb;
+}
+
 .cal-cell {
   background-color: var(--bg-surface);
   min-height: 86px;
@@ -1315,6 +1320,10 @@ html, body {
   flex-direction: column;
   gap: 4px;
   transition: background-color var(--transition-fast);
+}
+
+.cal-cell-weekend {
+  background-color: #fafaf9;
 }
 
 .cal-cell:hover {
@@ -1340,6 +1349,28 @@ html, body {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+.cal-weekend-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background-color: #f3f4f6;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+}
+
+.cal-weekend-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background-color: #f4f4f5;
+  color: #71717a;
+  border: 1px solid #e4e4e7;
+  display: flex;
+  align-items: center;
 }
 
 .cal-member-leave-tag {

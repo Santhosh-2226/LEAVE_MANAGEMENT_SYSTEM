@@ -50,6 +50,45 @@ async function getManagerChain(userId) {
   return chain;
 }
 
+/**
+ * Resolves the effective approver for a manager.
+ * If the manager is UNAVL and has a delegate assigned, routes to the delegate.
+ */
+export async function resolveEffectiveApprover(managerId) {
+  if (!managerId) return { effectiveApprover: null, originalManager: null, isDelegated: false };
+  let currentId = managerId;
+  const visited = new Set();
+  let originalManager = null;
+
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const res = await pool.query(
+      'SELECT id, name, email, role, availability_status as "availabilityStatus", delegate_id as "delegateId", manager_id as "managerId" FROM users WHERE id = $1',
+      [currentId]
+    );
+    if (res.rowCount === 0) break;
+    const u = res.rows[0];
+    if (!originalManager) originalManager = u;
+
+    // Check if user is UN_AVL and has a designated delegate
+    if (u.availabilityStatus === 'UN_AVL' && u.delegateId) {
+      currentId = u.delegateId;
+    } else {
+      return {
+        effectiveApprover: u,
+        originalManager,
+        isDelegated: u.id !== originalManager.id
+      };
+    }
+  }
+
+  return {
+    effectiveApprover: originalManager,
+    originalManager,
+    isDelegated: false
+  };
+}
+
 export async function getRequests(req, res) {
   const userId = parseInt(req.query.userId) || 1;
   try {
@@ -106,16 +145,24 @@ export async function getApprovals(req, res) {
               primary_app.name as "assignedApproverName",
               primary_app.role as "assignedApproverRole",
               CASE
+                WHEN lr.approver_id = $1 AND u.manager_id != $1 AND orig_mgr.name IS NOT NULL THEN orig_mgr.name
                 WHEN lr.approver_id != $1 AND primary_app.delegate_id = $1 THEN primary_app.name
                 ELSE NULL
               END as "delegatingFor"
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
-       JOIN users primary_app ON lr.approver_id = primary_app.id
+       LEFT JOIN users orig_mgr ON u.manager_id = orig_mgr.id
+       LEFT JOIN users primary_app ON lr.approver_id = primary_app.id
        WHERE lr.status IN ('PENDING', 'PENDING_TIER1', 'PENDING_TIER2')
          AND (
            lr.approver_id = $1
            OR (primary_app.delegate_id = $1 AND primary_app.availability_status = 'UN_AVL')
+         )
+         AND NOT (
+           -- Hide approvals queue if the active user is UN_AVL and has delegated away approvals
+           EXISTS (
+             SELECT 1 FROM users self WHERE self.id = $1 AND self.availability_status = 'UN_AVL' AND self.delegate_id IS NOT NULL
+           )
          )
        ORDER BY lr.id DESC`,
       [userId]
@@ -239,39 +286,34 @@ export async function applyLeave(req, res) {
       status = 'APPROVED';
       decidedBy = 'Auto-Approved (Emergency Leave - Backdated)';
       finalReason = finalReason ? `[EMERGENCY BACKDATED] ${finalReason}` : '[EMERGENCY BACKDATED]';
-    } else if (isEmergency) {
-      // Emergency Leave: Always requires 2-tier approval (direct manager + higher manager above them), even for 1 day
+    } else if (managerChain.length === 0) {
+      status = 'APPROVED';
+      decidedBy = `Self-Approved (${user.role})`;
+    } else if (isEmergency && workingDays > availableBalance) {
+      // Emergency Leave with Negative Balance Override: Requires 2-tier approval (direct manager + executive)
       finalLeaveType = 'Emergency Leave';
-      finalReason = finalReason ? `[EMERGENCY LEAVE] ${finalReason}` : '[EMERGENCY LEAVE]';
-      if (managerChain.length === 0) {
-        status = 'APPROVED';
-        decidedBy = `Self-Approved (${user.role})`;
-      } else {
-        requiredTiers = Math.min(2, managerChain.length);
-        assignedApprover = managerChain[0];
-        currentApproverId = assignedApprover.id;
-        currentTier = 1;
-        status = 'PENDING';
-      }
+      finalReason = finalReason ? `[EMERGENCY OVERRIDE] ${finalReason}` : '[EMERGENCY OVERRIDE]';
+      requiredTiers = Math.min(2, managerChain.length);
+      const { effectiveApprover } = await resolveEffectiveApprover(managerChain[0].id);
+      assignedApprover = effectiveApprover || managerChain[0];
+      currentApproverId = assignedApprover.id;
+      currentTier = 1;
+      status = 'PENDING';
     } else {
-      // Regular Leave Routing
-      if (managerChain.length === 0) {
-        status = 'APPROVED';
-        decidedBy = `Self-Approved (${user.role})`;
+      // Standard Tier Routing based on duration
+      if (workingDays < 3) {
+        requiredTiers = 1;
+      } else if (workingDays >= 3 && workingDays <= 7) {
+        requiredTiers = Math.min(2, managerChain.length);
       } else {
-        if (workingDays < 3) {
-          requiredTiers = 1;
-        } else if (workingDays >= 3 && workingDays <= 7) {
-          requiredTiers = Math.min(2, managerChain.length);
-        } else {
-          requiredTiers = managerChain.length;
-        }
-
-        assignedApprover = managerChain[0];
-        currentApproverId = assignedApprover.id;
-        currentTier = 1;
-        status = 'PENDING';
+        requiredTiers = managerChain.length;
       }
+
+      const { effectiveApprover } = await resolveEffectiveApprover(managerChain[0].id);
+      assignedApprover = effectiveApprover || managerChain[0];
+      currentApproverId = assignedApprover.id;
+      currentTier = 1;
+      status = 'PENDING';
     }
 
     const result = await pool.query(
@@ -407,11 +449,16 @@ export async function approveLeave(req, res) {
     const currentTier = parseInt(leaveReq.current_tier) || 1;
     const requiredTiers = parseInt(leaveReq.required_tiers) || 1;
 
-    const targetApproverRes = await pool.query('SELECT manager_id FROM users WHERE id = $1', [leaveReq.approver_id]);
-    const nextApproverId = targetApproverRes.rows[0]?.manager_id;
+    // Progression: look up next manager from requester's chain
+    const requesterChain = await getManagerChain(leaveReq.user_id);
+    const nextManagerCandidate = requesterChain[currentTier];
 
-    if (currentTier < requiredTiers && nextApproverId) {
+    if (currentTier < requiredTiers && nextManagerCandidate) {
+      const { effectiveApprover } = await resolveEffectiveApprover(nextManagerCandidate.id);
+      const nextApprover = effectiveApprover || nextManagerCandidate;
+      const nextApproverId = nextApprover.id;
       const nextTier = currentTier + 1;
+
       const result = await pool.query(
         `UPDATE leave_requests
          SET status = 'PENDING',
@@ -427,14 +474,11 @@ export async function approveLeave(req, res) {
       if (result.rowCount === 0) return res.status(409).json({ error: 'Leave request has already been decided' });
 
       // Notify Tier 2 approver
-      const nextAppRes = await pool.query('SELECT id, name, email, role FROM users WHERE id = $1', [nextApproverId]);
-      if (nextAppRes.rowCount > 0) {
-        notifyTier2Handoff({
-          requester: { name: leaveReq.requester_name, email: leaveReq.requester_email, role: leaveReq.requester_role },
-          nextApprover: nextAppRes.rows[0],
-          leave: result.rows[0]
-        }).catch(() => {});
-      }
+      notifyTier2Handoff({
+        requester: { name: leaveReq.requester_name, email: leaveReq.requester_email, role: leaveReq.requester_role },
+        nextApprover,
+        leave: result.rows[0]
+      }).catch(() => {});
 
       return res.json(result.rows[0]);
     } else {
@@ -675,7 +719,7 @@ export async function getTeamLeaves(req, res) {
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
        WHERE lr.user_id = ANY($1::int[])
-         AND lr.status IN ('APPROVED', 'PENDING')
+         AND lr.status IN ('APPROVED', 'PENDING', 'PENDING_TIER1', 'PENDING_TIER2')
        ORDER BY lr.start_date ASC`,
       [subIds]
     );

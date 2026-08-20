@@ -163,25 +163,44 @@ export async function retrieveRelevantChunks(query, limit = 3) {
 
   scored.sort((a, b) => b.relevanceScore - a.relevanceScore);
   
-  // If top score > 0, return top-K; otherwise fallback to general overview
-  const relevant = scored.filter(s => s.relevanceScore > 0).slice(0, limit);
-  return relevant.length > 0 ? relevant : dbRes.rows.slice(0, limit);
+  // Return ONLY chunks that actually match (score > 0). Do NOT return unrelated chunks!
+  return scored.filter(s => s.relevanceScore > 0).slice(0, limit);
 }
 
 /**
  * Generates structured, grounded answer from retrieved chunks
  */
 export async function generateGroundedAnswer(question, relevantChunks) {
+  const trimmed = question.toLowerCase().trim();
+  const isGreeting = ['hi', 'hello', 'hey', 'help', 'who are you', 'good morning', 'good afternoon', 'start'].includes(trimmed);
+
+  if (isGreeting) {
+    return {
+      answer: "Hello! I am your **AI HR Policy Copilot**. You can ask me anything regarding corporate leave rules, including:\n\n• **Annual Leave Accruals & Carry-Forward Quotas**\n• **Sick Leave & Doctor Certificate Rules**\n• **Maternity & Paternity Benefits**\n• **Casual & Emergency Leave Rules**\n• **Multi-Tier Approvals & 12-Hour Withdrawal Policies**\n\nHow can I help you today?",
+      citations: ['Section 1 to 9 Corporate Handbook'],
+      source: 'policy-rag-engine'
+    };
+  }
+
+  // Guard against out-of-domain queries (e.g. pizza, sports, etc.)
+  if (!relevantChunks || relevantChunks.length === 0) {
+    return {
+      answer: "I am your dedicated **HR Leave Policy Copilot**. I can only assist with company leave policies, medical certificate requirements, maternity/paternity benefits, leave accruals, carry-forward quotas, and approval workflows.\n\nI could not find any relevant information in the Corporate Leave Handbook for your question. Please ask a question related to company leave policies or reach out directly to your HR department.",
+      citations: [],
+      source: 'policy-rag-engine'
+    };
+  }
+
   const context = relevantChunks.map(c => `${c.section_title}:\n${c.chunk_text}`).join('\n\n');
   const citations = relevantChunks.map(c => c.section_title);
 
-  // If Gemini API Key is configured, use Gemini LLM
+  // If Gemini API Key is configured, try Gemini LLM with strict 6s timeout
   if (process.env.GEMINI_API_KEY) {
     try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `You are the official HR Leave Policy Copilot. Answer the user's question accurately using ONLY the provided official policy context.
-Be direct, helpful, and professional. Use markdown formatting with bullet points.
+      const apiKey = process.env.GEMINI_API_KEY;
+      const prompt = `You are the official HR Leave Policy Copilot for an enterprise workforce. Answer the user's question accurately using ONLY the provided official policy context.
+If the user's question is unrelated to company leave policies, politely state that you only assist with corporate leave policies.
+Be direct, helpful, and professional. Use markdown formatting with bullet points and bold highlights.
 Cite the section names clearly.
 
 OFFICIAL POLICY CONTEXT:
@@ -190,31 +209,47 @@ ${context}
 QUESTION:
 ${question}`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
+      const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-pro'];
+      for (const model of modelsToTry) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }]
+            }),
+            signal: AbortSignal.timeout(6000)
+          });
 
-      return {
-        answer: response.text,
-        citations,
-        source: 'gemini-2.5-flash'
-      };
+          if (res.ok) {
+            const data = await res.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) {
+              return {
+                answer: text,
+                citations,
+                source: model
+              };
+            }
+          }
+        } catch {}
+      }
     } catch (err) {
       console.warn('[RAG Service] Gemini API call fallback:', err.message);
     }
   }
 
-  // Deterministic Grounded Policy Engine (Production-Grade Fallback)
-  let answer = `According to the official **${citations[0]}**:\n\n`;
+  // Deterministic Grounded Policy Engine (Ultra-Fast Instant Fallback)
+  let answer = `### 📜 ${citations[0]}\n\n`;
   const mainChunk = relevantChunks[0];
   const bulletLines = mainChunk.chunk_text.split('\n').filter(l => l.trim().length > 0);
   
-  answer += bulletLines.join('\n') + '\n\n';
+  answer += bulletLines.join('\n\n') + '\n\n';
   
   if (relevantChunks.length > 1) {
-    answer += `**Additional Relevant Policy Details (${relevantChunks[1].section_title}):**\n`;
-    answer += relevantChunks[1].chunk_text.split('\n').slice(0, 3).join('\n');
+    answer += `**Additional Relevant Policy Details (${relevantChunks[1].section_title}):**\n\n`;
+    answer += relevantChunks[1].chunk_text.split('\n').slice(0, 3).join('\n\n');
   }
 
   return {

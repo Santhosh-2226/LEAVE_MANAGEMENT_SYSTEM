@@ -138,6 +138,29 @@ export async function updateAvailability(req, res) {
       [availabilityStatus, finalDelegateId, id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+
+    // If manager went UNAVL with a delegate, re-assign pending approvals to the delegate
+    if (availabilityStatus === 'UN_AVL' && finalDelegateId) {
+      await pool.query(
+        `UPDATE leave_requests
+         SET approver_id = $1
+         WHERE approver_id = $2 AND status IN ('PENDING', 'PENDING_TIER1', 'PENDING_TIER2')`,
+        [finalDelegateId, id]
+      );
+    } else if (availabilityStatus === 'AVL') {
+      // If manager returned to AVL, re-assign pending requests back to this manager if they were delegated
+      await pool.query(
+        `UPDATE leave_requests lr
+         SET approver_id = $1
+         FROM users u
+         WHERE lr.user_id = u.id
+           AND u.manager_id = $1
+           AND lr.status IN ('PENDING', 'PENDING_TIER1', 'PENDING_TIER2')
+           AND lr.current_tier = 1`,
+        [id]
+      );
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
